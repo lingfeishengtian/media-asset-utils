@@ -1,0 +1,9 @@
+{
+  "platforms": ["ios", "android", "web"],
+  "ios": {
+    "modules": ["MediaAssetUtilsModule"]
+  },
+  "android": {
+    "modules": ["com.hunterhan.mediaassetutils.MediaAssetUtilsModule"]
+  }
+}
