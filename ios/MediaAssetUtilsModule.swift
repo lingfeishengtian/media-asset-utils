@@ -5,47 +5,63 @@ public class MediaAssetUtilsModule: Module {
     // Each module class must implement the definition function. The definition consists of components
     // that describes the module's functionality and behavior.
     // See https://docs.expo.dev/modules/module-api for more details about available components.
-    enum PhotoAssetErrors: CustomStringConvertible {
+    enum PhotoAssetErrors: Int, Codable {
         case noAssetsFound
         case destinationNotAccessible
         
-        var description: String {
-            switch self {
-            case .noAssetsFound:
-                return "No assets found for any identifiers"
-            case .destinationNotAccessible:
-                return "Unable to access specified destination"
-            }
-        }
+//        var description: String {
+//            switch self {
+//            case .noAssetsFound:
+//                return "No assets found for any identifiers"
+//            case .destinationNotAccessible:
+//                return "Unable to access specified destination"
+//            }
+//        }
     }
     
-    enum PhotoAssetWarnings: CustomStringConvertible {
+    enum PhotoAssetWarnings: Int, Codable {
         case duplicateIdentifiersRemoved
         case destinationFileAlreadyExists
         case blacklistedExtension
+        case noDeletionNecesary
         
-        var description: String {
-            switch self {
-            case .duplicateIdentifiersRemoved:
-                return "All duplicate identifiers removed"
-            case .destinationFileAlreadyExists:
-                return "Destination file already exists, cannot copy over"
-            case .blacklistedExtension:
-                return "This extension cannot be exported"
-            }
-        }
+//        var description: String {
+//            switch self {
+//            case .duplicateIdentifiersRemoved:
+//                return "All duplicate identifiers removed"
+//            case .destinationFileAlreadyExists:
+//                return "Destination file already exists, cannot copy over"
+//            case .blacklistedExtension:
+//                return "This extension cannot be exported"
+//            }
+//        }
     }
     
-    struct ExportedAssetResource {
+    struct ExportedAssetResource: Codable {
         var associatedAssetID: String
         var localFileLocations: String
-        var warning: [String] = []
-        var dict: [String: Any] {
-            return [
-                "associatedAssetID": associatedAssetID,
-                "localFileLocations": localFileLocations,
-                "warning": warning
-            ]
+        var warning: [PhotoAssetWarnings] = []
+        
+//        var dict: [String: Any] {
+//            return [
+//                "associatedAssetID": associatedAssetID,
+//                "localFileLocations": localFileLocations,
+//                "warning": warning
+//            ]
+//        }
+    }
+    
+    struct AssetReturnResult: Codable {
+        var error: [PhotoAssetErrors] = []
+        var general: [PhotoAssetWarnings] = []
+        var exportResults: [ExportedAssetResource] = []
+        
+        mutating func appendResource(resource: ExportedAssetResource) {
+            self.exportResults.append(resource)
+        }
+        
+        mutating func appendWarning(warn: PhotoAssetWarnings){
+            self.general.append(warn)
         }
     }
     
@@ -57,17 +73,18 @@ public class MediaAssetUtilsModule: Module {
             // The module will be accessible from `requireNativeModule('LivePhotoUtils')` in JavaScript.
             Name("MediaAssetUtils")
             
-            AsyncFunction("exportPhotoAssets") { (withIdentifiers: [String], to: String) -> [String: Any] in
-                var returnValue:[String: [Any]] = ["general":[]]
-                returnValue["exportResults"] = []
-                
+            AsyncFunction("exportPhotoAssets") { (withIdentifiers: [String], to: String, withPrefix: String, shouldRemoveExistingFile: Bool, ignoreBlacklist: Bool) -> String in
+                let encoder = JSONEncoder()
+                var returnValue:AssetReturnResult = AssetReturnResult()
+                                
                 if !FileManager.default.fileExists(atPath: to) || !FileManager.default.isWritableFile(atPath: to) {
-                    returnValue["general"]?.append(PhotoAssetErrors.destinationNotAccessible.description)
+                    returnValue.error.append(PhotoAssetErrors.destinationNotAccessible)
+                    return String(data: try encoder.encode(returnValue), encoding: .utf8)!
                 }
                 
                 let identifierSet = Set(withIdentifiers)
                 if withIdentifiers.count != withIdentifiers.count {
-                    returnValue["general"]?.append(PhotoAssetWarnings.duplicateIdentifiersRemoved.description)
+                    returnValue.appendWarning(warn: PhotoAssetWarnings.duplicateIdentifiersRemoved)
                 }
                 
                 let fetchOptions = PHFetchOptions()
@@ -75,7 +92,8 @@ public class MediaAssetUtilsModule: Module {
                 fetchOptions.includeHiddenAssets = true
                 let queriedAssets = PHAsset.fetchAssets(withLocalIdentifiers: Array(identifierSet), options: fetchOptions)
                 if queriedAssets.count <= 0{
-                    returnValue["general"]?.append(PhotoAssetErrors.noAssetsFound.description)
+                    returnValue.error.append(PhotoAssetErrors.noAssetsFound)
+                    return String(data: try encoder.encode(returnValue), encoding: .utf8)!
                 }
                 // Exported files with nil will be ones that didn't exist in iOS photo library
                 
@@ -86,9 +104,6 @@ public class MediaAssetUtilsModule: Module {
                     group in
                     var exported = [ExportedAssetResource]()
                     exported.reserveCapacity(queriedAssets.count)
-                    
-                    let options: PHAssetResourceRequestOptions = PHAssetResourceRequestOptions()
-                    options.isNetworkAccessAllowed = true
                     
                     for i in 0..<queriedAssets.count{
                         let queried = queriedAssets.object(at: i)
@@ -103,19 +118,27 @@ public class MediaAssetUtilsModule: Module {
                         } else {
                             assetResources = PHAssetResource.assetResources(for: queried)
                         }
-//                        let assetResources = PHAssetResource.assetResources(for: queried)
                         
                         for asset in assetResources {
                             print(asset.originalFilename)
                             let fileExtension: String = URL(fileURLWithPath: asset.originalFilename).pathExtension
-                            if !BLACKLISTED_EXTENSIONS.contains(fileExtension.lowercased()) {
+                            if !(!ignoreBlacklist && BLACKLISTED_EXTENSIONS.contains(fileExtension.lowercased())) {
                                 group.addTask {
-                                    let destination = URL(fileURLWithPath: to + "/" + asset.originalFilename).deletingPathExtension().appendingPathExtension(fileExtension)
+                                    let destination = URL(fileURLWithPath: to + "/" + withPrefix + asset.originalFilename).deletingPathExtension().appendingPathExtension(fileExtension)
                                     var newAssetResource = ExportedAssetResource(associatedAssetID: asset.assetLocalIdentifier, localFileLocations: destination.absoluteString)
+                                    
+                                    if (shouldRemoveExistingFile) {
+                                        do {
+                                            try FileManager.default.removeItem(at: destination)
+                                        } catch {
+                                            newAssetResource.warning.append(PhotoAssetWarnings.noDeletionNecesary)
+                                        }
+                                    }
+                                    
                                     do {
                                         try await PHAssetResourceManager.default().writeData(for: asset, toFile: destination, options: options)
                                     } catch {
-                                        newAssetResource.warning.append(PhotoAssetWarnings.destinationFileAlreadyExists.description)
+                                        newAssetResource.warning.append(PhotoAssetWarnings.destinationFileAlreadyExists)
                                     }
                                     return newAssetResource
                                 }
@@ -124,11 +147,11 @@ public class MediaAssetUtilsModule: Module {
                     }
                     
                     for await resource in group {
-                        returnValue["exportResults"]?.append(resource.dict)
+                        returnValue.appendResource(resource: resource)
                     }
                 })
                 
-                return returnValue
+                return String(data: try encoder.encode(returnValue), encoding: .utf8)!
             }
         
         // Generic function where an identifier can be used to export all assets to a temporary location

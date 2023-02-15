@@ -4,7 +4,7 @@ import * as ImagePicker from "expo-image-picker";
 import { useEffect, useState } from "react";
 import * as MediaLibrary from "expo-media-library";
 import * as FileSystem from "expo-file-system";
-import * as MediaHelperUtils from "media-asset-utils"
+import * as MediaHelperUtils from "media-asset-utils";
 
 async function getPhotos(setImage) {
   MediaLibrary.getAssetsAsync({
@@ -14,7 +14,7 @@ async function getPhotos(setImage) {
     console.log(assets.assets[0].mediaSubtypes);
     setImage(assets.assets[0].uri);
 
-    const assetIds = []
+    const assetIds = [];
     for (const asset in assets.assets) {
       assetIds.push(assets.assets[asset].id);
       // let info = await MediaLibrary.getAssetInfoAsync(assets.assets[asset].id);
@@ -29,7 +29,10 @@ async function getPhotos(setImage) {
 
     MediaHelperUtils.exportPhotoAssets(
       assetIds,
-      FileSystem.documentDirectory.substring(8)
+      FileSystem.documentDirectory.substring(8),
+      "t_",
+      false,
+      true
     ).then((result) => {
       console.log(JSON.stringify(result));
     });
@@ -40,7 +43,7 @@ async function getPhotos(setImage) {
 var num = 0;
 export default function App() {
   const [image, setImage] = useState(null);
-  
+
   useEffect(() => {
     MediaLibrary.getPermissionsAsync().then((status) => {
       console.log(status);
@@ -51,8 +54,6 @@ export default function App() {
       }
       getPhotos(setImage);
     });
-
-    
   }, []);
 
   return (
